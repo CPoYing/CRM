@@ -14,8 +14,10 @@ from openpyxl.worksheet.datavalidation import DataValidation
 # ============================================================
 # Page config
 # ============================================================
+APP_NAME = "專案管理開發時程"
+
 st.set_page_config(
-    page_title="專案追蹤工具",
+    page_title=APP_NAME,
     page_icon="📋",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -187,6 +189,9 @@ def init_session():
     st.session_state.setdefault("uploaded_token", None)
     st.session_state.setdefault("last_saved", None)
     st.session_state.setdefault("save_error", None)
+    st.session_state.setdefault("collapsed_wbs", set())   # 被收合的主任務 WBS
+    st.session_state.setdefault("expand_ver", 0)          # 收合控制項的 widget 版本
+    st.session_state.setdefault("expand_options", [])
 
 
 def editor_key():
@@ -205,6 +210,65 @@ def wbs_sort_key(value):
 def parent_wbs(value):
     text = str(value).strip()
     return text.rsplit(".", 1)[0] if "." in text else None
+
+
+def child_counts(df):
+    """每個主任務底下的子任務數量 {WBS: n}。"""
+    counts = {}
+    sub_wbs = df.loc[df["層級"] == "子任務", "WBS編號"].astype(str).str.strip()
+    for wbs in df.loc[df["層級"] == "主任務", "WBS編號"].astype(str).str.strip():
+        counts[wbs] = int(sub_wbs.str.startswith(wbs + ".").sum())
+    return counts
+
+
+def collapsible_mains(df):
+    """可收合的主任務（有子任務的才需要）→ [(wbs, 顯示文字, 子任務數)]。"""
+    counts = child_counts(df)
+    mains = []
+    for _, row in df[df["層級"] == "主任務"].iterrows():
+        wbs = str(row["WBS編號"]).strip()
+        if counts.get(wbs):
+            mains.append((wbs, f"{wbs} {row['任務名稱']}（{counts[wbs]}）", counts[wbs]))
+    mains.sort(key=lambda item: wbs_sort_key(item[0]))
+    return mains
+
+
+def collapse_mask(df, collapsed):
+    """被收合的主任務，其子任務不顯示。"""
+    if not collapsed:
+        return pd.Series(True, index=df.index)
+    wbs = df["WBS編號"].astype(str).str.strip()
+    hidden = pd.Series(False, index=df.index)
+    for parent in collapsed:
+        hidden |= (df["層級"] == "子任務") & wbs.str.startswith(parent + ".")
+    return ~hidden
+
+
+def orphan_subtasks(df):
+    """找不到對應主任務的子任務（例如主任務被刪掉了）。這些列不會被收合，永遠看得到。"""
+    main_wbs = set(df.loc[df["層級"] == "主任務", "WBS編號"].astype(str).str.strip())
+    subs = df[df["層級"] == "子任務"]
+    if subs.empty:
+        return subs
+    return subs[~subs["WBS編號"].map(parent_wbs).isin(main_wbs)]
+
+
+def tree_markers(view_df, collapsed, counts):
+    """任務清單最左邊的樹狀符號。"""
+    marks = []
+    for _, row in view_df.iterrows():
+        if row["層級"] != "主任務":
+            marks.append("　└")
+            continue
+        wbs = str(row["WBS編號"]).strip()
+        n = counts.get(wbs, 0)
+        if not n:
+            marks.append("")
+        elif wbs in collapsed:
+            marks.append(f"▶ {n}")
+        else:
+            marks.append("▼")
+    return marks
 
 
 def _same(a, b):
@@ -410,7 +474,7 @@ def build_gantt(df, show_subtasks=False, inherit_parent_dates=True):
 def to_excel_bytes(df, project_name):
     wb = Workbook()
     ws = wb.active
-    ws.title = "專案追蹤清單"
+    ws.title = "開發時程"
 
     title_font = Font(name="Arial", size=16, bold=True, color="FFFFFF")
     header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
@@ -433,7 +497,7 @@ def to_excel_bytes(df, project_name):
 
     # 標題列
     ws.merge_cells(f"A1:{last_col}1")
-    ws["A1"] = f"專案追蹤清單 — {project_name}"
+    ws["A1"] = f"{APP_NAME} — {project_name}"
     ws["A1"].font = title_font
     ws["A1"].fill = dark_blue
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
@@ -541,8 +605,8 @@ def main():
 
     # ----- Sidebar -----
     with st.sidebar:
-        st.title("📋 專案追蹤工具")
-        st.caption("支援主任務 / 子任務 + 甘特圖")
+        st.title(f"📋 {APP_NAME}")
+        st.caption("主任務 / 子任務可收合 + 甘特圖")
 
         name = st.text_input("專案名稱", value=st.session_state.project_name)
         if name != st.session_state.project_name:
@@ -621,29 +685,14 @@ def main():
         else:
             st.caption(f"存放位置：{DATA_FILE}")
 
-    # ----- Filter -----
-    df = st.session_state.df
-    filter_active = not (
-        set(filter_level) == set(LEVEL_OPTIONS)
-        and set(filter_status) == set(STATUS_OPTIONS)
-        and set(filter_priority) == set(PRIORITY_OPTIONS)
-    )
-    st.session_state.filter_active = filter_active
-
-    mask = (
-        df["層級"].isin(filter_level)
-        & df["狀態"].isin(filter_status)
-        & df["優先順序"].isin(filter_priority)
-    )
-    view_index = df.index[mask].tolist()
-    view_df = df.loc[view_index].reset_index(drop=True)
-
     # ----- Header + metrics -----
+    df = st.session_state.df
     metrics = calc_metrics(df)
 
-    st.title(st.session_state.project_name)
+    st.title(APP_NAME)
     st.caption(
-        f"共 {len(df)} 筆任務（主任務 {metrics['主任務數']} / 子任務 {metrics['子任務數']}）"
+        f"專案：{st.session_state.project_name}"
+        f"　｜　共 {len(df)} 筆任務（主任務 {metrics['主任務數']} / 子任務 {metrics['子任務數']}）"
         f"　｜　今天 {date.today():%Y-%m-%d}"
     )
 
@@ -664,9 +713,68 @@ def main():
     # ===== Tab 1: Editable list =====
     with tab1:
         st.markdown("#### 任務清單（可直接編輯）")
-        st.caption("支援新增列、刪除列；修改會自動存到本機檔案。有套用篩選時，刪除的列也會真的從資料中移除。")
+        st.caption("支援新增列、刪除列；修改會自動存到本機檔案。有套用篩選 / 收合時，刪除的列也會真的從資料中移除。")
+
+        # ---- 主任務收合控制 ----
+        mains = collapsible_mains(df)
+        labels = [label for _, label, _ in mains]
+        label_to_wbs = {label: wbs for wbs, label, _ in mains}
+
+        # 主任務清單有變動（改名 / 新增 / 刪除）時，換掉 widget key 避免殘留舊選項
+        if labels != st.session_state.expand_options:
+            st.session_state.expand_options = labels
+            st.session_state.expand_ver += 1
+
+        if mains:
+            head, btn_a, btn_b = st.columns([6, 1, 1])
+            head.caption("點選主任務可展開 / 收合其子任務（灰色＝已收合）")
+            if btn_a.button("全部展開", width="stretch"):
+                st.session_state.collapsed_wbs = set()
+                st.session_state.expand_ver += 1
+                st.rerun()
+            if btn_b.button("全部收合", width="stretch"):
+                st.session_state.collapsed_wbs = {wbs for wbs, _, _ in mains}
+                st.session_state.expand_ver += 1
+                st.rerun()
+
+            selected = st.pills(
+                "展開的主任務",
+                options=labels,
+                selection_mode="multi",
+                default=[l for l in labels if label_to_wbs[l] not in st.session_state.collapsed_wbs],
+                key=f"expand_pills_{st.session_state.expand_ver}",
+                label_visibility="collapsed",
+            )
+            st.session_state.collapsed_wbs = {
+                wbs for wbs, label, _ in mains if label not in (selected or [])
+            }
+
+        collapsed = st.session_state.collapsed_wbs
+
+        # ---- 篩選 + 收合 → 實際顯示的列 ----
+        mask = (
+            df["層級"].isin(filter_level)
+            & df["狀態"].isin(filter_status)
+            & df["優先順序"].isin(filter_priority)
+            & collapse_mask(df, collapsed)
+        )
+        view_index = df.index[mask].tolist()
+        view_df = df.loc[view_index].reset_index(drop=True)
+        # 顯示的列不是全部時，編輯位置會對不上主資料，套用編輯後必須重建 editor
+        st.session_state.filter_active = len(view_index) != len(df)
+
+        # 顯示的列組成一變（篩選 / 收合），舊的編輯狀態位置就失效，
+        # 換 key 重建 editor，否則下一次會把編輯套用到錯的列
+        if (
+            st.session_state.last_view_index is not None
+            and view_index != st.session_state.last_view_index
+        ):
+            st.session_state.editor_ver += 1
+
+        view_df.insert(0, "階層", tree_markers(view_df, collapsed, child_counts(df)))
 
         column_config = {
+            "階層": st.column_config.TextColumn("階層", width="small", disabled=True),
             "WBS編號": st.column_config.TextColumn("WBS編號", width="small"),
             "層級": st.column_config.SelectboxColumn("層級", options=LEVEL_OPTIONS, required=True, width="small"),
             "任務名稱": st.column_config.TextColumn("任務名稱", width="medium"),
@@ -690,8 +798,21 @@ def main():
         # 供下一輪把編輯位置對應回主資料
         st.session_state.last_view_index = view_index
 
-        if filter_active:
-            st.info(f"目前有套用篩選，只顯示 {len(view_df)} / {len(df)} 筆。")
+        if len(view_index) != len(df):
+            hidden_by_collapse = int((~collapse_mask(df, collapsed)).sum())
+            note = f"目前只顯示 {len(view_index)} / {len(df)} 筆"
+            if hidden_by_collapse:
+                note += f"（其中 {hidden_by_collapse} 筆是被收合的子任務）"
+            st.info(note + "。統計數字與甘特圖一律以全部資料計算。")
+
+        orphans = orphan_subtasks(df)
+        if len(orphans):
+            st.caption(
+                "⚠ 以下子任務找不到對應的主任務（主任務被刪掉時子任務不會跟著刪，避免誤刪），"
+                "所以不會被收合：" + "、".join(
+                    f"{r['WBS編號']} {r['任務名稱']}" for _, r in orphans.iterrows()
+                )
+            )
 
         overdue = df[overdue_mask(df)]
         if len(overdue):
@@ -731,7 +852,7 @@ def main():
             st.download_button(
                 label="⬇️ 下載 Excel",
                 data=to_excel_bytes(df, st.session_state.project_name),
-                file_name=f"專案追蹤_{st.session_state.project_name}_{stamp}.xlsx",
+                file_name=f"{APP_NAME}_{st.session_state.project_name}_{stamp}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 width="stretch",
             )
@@ -742,7 +863,7 @@ def main():
             st.download_button(
                 label="⬇️ 下載 CSV",
                 data=csv_df.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"專案追蹤_{st.session_state.project_name}_{stamp}.csv",
+                file_name=f"{APP_NAME}_{st.session_state.project_name}_{stamp}.csv",
                 mime="text/csv",
                 width="stretch",
             )
