@@ -12,6 +12,10 @@ venv/
 **/.streamlit/secrets.toml
 *service-account*.json
 *-key.json
+# 從 Google Cloud 下載的金鑰檔名不固定（例如 project-tracker-123456-a1b2c3.json），
+# 這個專案本來就沒有需要進版控的 .json，直接全擋掉比較安全
+/*.json
+/project_tracker_app/*.json
 
 # OS
 Thumbs.db
