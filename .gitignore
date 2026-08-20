@@ -1,0 +1,15 @@
+# 本機執行時產生的任務資料（每台機器各自獨立）
+project_tracker_app/data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+Thumbs.db
+desktop.ini
