@@ -21,6 +21,11 @@ import json
 import sys
 from pathlib import Path
 
+
+def info(*args):
+    """說明文字一律走 stderr，這樣 `| clip` 只會拿到乾淨的 TOML。"""
+    print(*args, file=sys.stderr)
+
 FIELDS = [
     "type", "project_id", "private_key_id", "private_key", "client_email",
     "client_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url",
@@ -39,7 +44,7 @@ def build_toml(key_data, spreadsheet_url):
 
 def main(argv):
     if len(argv) < 3:
-        print(__doc__)
+        info(__doc__)
         return 1
 
     key_path = Path(argv[1])
@@ -47,24 +52,24 @@ def main(argv):
     write = "--write" in argv[3:]
 
     if not key_path.exists():
-        print(f"❌ 找不到金鑰檔：{key_path}")
+        info(f"❌ 找不到金鑰檔：{key_path}")
         return 1
 
     try:
         key_data = json.loads(key_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        print(f"❌ 這不是有效的 JSON 檔：{exc}")
+        info(f"❌ 這不是有效的 JSON 檔：{exc}")
         return 1
 
     missing = [f for f in ("private_key", "client_email", "project_id") if f not in key_data]
     if missing:
-        print(f"❌ JSON 裡少了 {missing}，這可能不是服務帳號金鑰檔")
+        info(f"❌ JSON 裡少了 {missing}，這可能不是服務帳號金鑰檔")
         return 1
     if key_data.get("type") != "service_account":
-        print(f"⚠️  type 是 {key_data.get('type')!r}，不是 service_account，可能抓錯檔案")
+        info(f"⚠️  type 是 {key_data.get('type')!r}，不是 service_account，可能抓錯檔案")
 
     if "docs.google.com" not in spreadsheet_url:
-        print(f"⚠️  試算表網址看起來怪怪的：{spreadsheet_url}")
+        info(f"⚠️  試算表網址看起來怪怪的：{spreadsheet_url}")
 
     toml_text = build_toml(key_data, spreadsheet_url)
 
@@ -72,18 +77,21 @@ def main(argv):
         target = Path(__file__).parent / ".streamlit" / "secrets.toml"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(toml_text, encoding="utf-8")
-        print(f"✅ 已寫入 {target}")
-        print("   （這個路徑已在 .gitignore，不會被推上 GitHub）")
-        print()
+        info(f"✅ 已寫入 {target}")
+        info("   （這個路徑已在 .gitignore，不會被推上 GitHub）")
+        info("")
 
-    print("=" * 60)
-    print("以下整段複製，貼到 Streamlit Cloud 的 Settings → Secrets：")
-    print("=" * 60)
-    print(toml_text)
-    print("=" * 60)
-    print(f"⚠️  記得把試算表『共用』給這個帳號，權限選「編輯者」：")
-    print(f"    {key_data['client_email']}")
-    print("⚠️  以上內容含私鑰，等同密碼，不要貼到公開的地方。")
+    # 只有 TOML 本身走 stdout，才能安全地 `| clip`
+    sys.stdout.write(toml_text)
+
+    info("=" * 60)
+    info("↑ 以上整段（[gsheets] 開頭到最後一行）貼到 Streamlit 的 Settings → Secrets")
+    info(f"⚠️  記得把試算表『共用』給這個帳號，權限選「編輯者」：")
+    info(f"    {key_data['client_email']}")
+    info("⚠️  以上內容含私鑰，等同密碼，不要貼到公開的地方。")
+    info("")
+    info("想直接複製到剪貼簿（不含這些說明文字）：")
+    info(f'    python make_secrets.py "{key_path}" "{spreadsheet_url}" | clip')
     return 0
 
 
