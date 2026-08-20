@@ -7,8 +7,11 @@ __pycache__/
 .venv/
 venv/
 
-# Streamlit
+# Streamlit（服務帳號金鑰，絕對不能進版控）
 .streamlit/secrets.toml
+**/.streamlit/secrets.toml
+*service-account*.json
+*-key.json
 
 # OS
 Thumbs.db

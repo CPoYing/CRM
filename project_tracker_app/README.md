@@ -23,34 +23,47 @@ streamlit run app.py
 
 瀏覽器會自動開啟 `http://localhost:8501`
 
+## 資料存在哪裡？
+
+App 會自動判斷，不用改程式碼：
+
+| 情況 | 儲存位置 | 會不會不見 |
+| --- | --- | --- |
+| 沒有設定 secrets（本機執行） | `data/tasks.json` | 只要不刪檔案就在 |
+| 有設定 Google Sheets secrets | Google 試算表 | ✅ 不會不見 |
+
+⚠️ **部署到 Streamlit Cloud 一定要設定 Google Sheets**，否則資料會不見 ——
+Streamlit Community Cloud 沒有永久磁碟，睡眠喚醒、重新部署、Reboot 都會把容器重建、
+把檔案還原成 repo 裡的版本。設定方法見 **[SETUP_GSHEETS.md](SETUP_GSHEETS.md)**。
+
+左側欄最下面會顯示目前實際用的是哪一種。
+
 ## 資料是不是共享的？
 
-**資料存在「執行 App 的那台機器」上的 `data/tasks.json`。** 依使用方式不同：
+| 使用方式 | 別人看得到嗎 |
+| --- | --- |
+| 你自己 `streamlit run`（localhost） | ❌ 只有你這台機器連得到 |
+| `--server.address 0.0.0.0` 開放區網 | ✅ 同網段的人都能進來，共用同一份 |
+| 部署到 Streamlit Cloud | ✅ 拿到網址的人都能進來，共用同一份 |
 
-| 使用方式 | 別人看得到嗎 | 說明 |
-| --- | --- | --- |
-| 你自己 `streamlit run`（localhost） | ❌ 看不到 | 只有你這台機器連得到，純個人使用 |
-| 開放區網：`streamlit run app.py --server.address 0.0.0.0` | ✅ 共享同一份 | 同網段的人用 `http://你的IP:8501` 就能進來，**大家讀寫的是同一個檔案** |
-| 部署到 Streamlit Cloud | ✅ 共享同一份（但會不見） | 雲端檔案系統是暫時的，服務重啟 / 重新部署後 `data/tasks.json` 會消失 |
+⚠️ **沒有登入、沒有權限控管、沒有並發保護。** 多人同時開的時候，每個人的瀏覽器各自持有一份副本，
+誰後存檔誰覆蓋（last write wins），而且別人改過之後你要按左側「重新載入雲端資料」才看得到。
 
-⚠️ **目前沒有登入、沒有權限控管、沒有並發保護。** 多人同時開的時候，每個人的瀏覽器各自持有一份資料副本，誰後存檔誰覆蓋（last write wins），而且對方畫面不會即時更新，要重新整理才看得到別人的修改。
-
-所以現況適合：**單人使用**，或**一個人維護、其他人看**。
-如果要真的多人協作編輯，需要換掉儲存層（Google Sheets / SQLite / Postgres）並加上登入與衝突處理。
+所以現況適合：**單人使用**，或**一個人在 App 裡維護、其他人看**。
+要多人一起編輯的話，建議直接在 Google 試算表裡改（原生支援即時協作與版本紀錄），
+App 當成統計與甘特圖的檢視介面。
 
 ## 部署到 Streamlit Cloud
 
 1. 到 [share.streamlit.io](https://share.streamlit.io) 連線這個 repo
 2. Main file path 填 `project_tracker_app/app.py`
-3. 部署完成後即可用公開網址使用
-
-雲端版請把它當唯讀展示用，重要資料請用「匯出」下載備份。
+3. 依 [SETUP_GSHEETS.md](SETUP_GSHEETS.md) 設定 Secrets（**不做的話資料會不見**）
 
 ## 資料說明
 
 - 預設已內建「合約 / 訂單 / 出貨 / 點銅…」等模組資料
-- 第一次啟動會用內建預設資料；之後一律讀 `data/tasks.json`
-- `data/` 不會進版控（已列入 `.gitignore`），所以每台機器的資料是各自獨立的
+- 找不到既有資料時（例如試算表還是空的）會用內建預設資料，並自動寫回試算表當種子
+- `data/` 與 `.streamlit/secrets.toml` 都不會進版控（已列入 `.gitignore`）
 - 側邊欄「還原預設資料」可隨時重置
 
 ## 欄位規則

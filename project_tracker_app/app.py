@@ -1,7 +1,5 @@
 import io
-import json
 from datetime import datetime, date
-from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
@@ -10,6 +8,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
+
+import storage
 
 # ============================================================
 # Page config
@@ -51,7 +51,6 @@ NEW_ROW_DEFAULTS = {
     "進度(%)": 0, "備註": "",
 }
 
-DATA_FILE = Path(__file__).parent / "data" / "tasks.json"
 DEFAULT_PROJECT_NAME = "訂單管理系統模組開發"
 
 # ============================================================
@@ -147,43 +146,41 @@ def df_to_records(df):
 
 
 def save_data():
-    """把目前資料寫到本機 data/tasks.json，重新整理瀏覽器也不會不見。"""
+    """存檔（本機檔案或 Google Sheets，看 storage 決定）。失敗不會讓 App 掛掉。"""
     try:
-        DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "project_name": st.session_state.project_name,
-            "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "tasks": df_to_records(st.session_state.df),
-        }
-        DATA_FILE.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        stamp = storage.save(
+            df_to_records(st.session_state.df), st.session_state.project_name, COLUMNS
         )
-        st.session_state.last_saved = payload["saved_at"]
+        st.session_state.last_saved = stamp
+        st.session_state.save_error = None
         return True
-    except Exception as exc:  # 存檔失敗不該讓整個 App 掛掉
+    except Exception as exc:
         st.session_state.save_error = str(exc)
         return False
 
 
 def load_data():
-    """讀本機存檔；沒有存檔就用內建預設資料。"""
-    if DATA_FILE.exists():
-        try:
-            payload = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-            df = normalize_df(pd.DataFrame(payload.get("tasks", [])))
-            if df.empty:
-                raise ValueError("存檔內沒有任務")
-            return df, payload.get("project_name", DEFAULT_PROJECT_NAME)
-        except Exception as exc:
-            st.warning(f"讀取本機存檔失敗，改用預設資料：{exc}")
-    return normalize_df(pd.DataFrame(DEFAULT_DATA)), DEFAULT_PROJECT_NAME
+    """讀既有資料；沒有就用內建預設資料。"""
+    try:
+        records, project_name = storage.load(COLUMNS)
+        if records:
+            df = normalize_df(pd.DataFrame(records))
+            if not df.empty:
+                return df, (project_name or DEFAULT_PROJECT_NAME), True
+    except Exception as exc:
+        st.warning(f"讀取既有資料失敗，改用預設資料：{exc}")
+    return normalize_df(pd.DataFrame(DEFAULT_DATA)), DEFAULT_PROJECT_NAME, False
 
 
 def init_session():
     if "df" not in st.session_state:
-        df, project_name = load_data()
+        df, project_name, loaded = load_data()
         st.session_state.df = df
         st.session_state.project_name = project_name
+        st.session_state.setdefault("save_error", None)
+        # 雲端第一次啟動、試算表還是空的 → 先把預設資料寫進去當種子
+        if not loaded and storage.backend() != "local":
+            save_data()
     st.session_state.setdefault("editor_ver", 0)
     st.session_state.setdefault("last_view_index", None)
     st.session_state.setdefault("uploaded_token", None)
@@ -676,14 +673,24 @@ def main():
             save_data()
             st.rerun()
 
+        backend_name, backend_detail = storage.describe()
+        if backend_name != "本機檔案":
+            if st.button("重新載入雲端資料", width="stretch",
+                         help="別人在試算表改過資料時，用這個抓最新版"):
+                storage.clear_cache()
+                for key in ("df", "project_name", "last_saved", "collapsed_wbs"):
+                    st.session_state.pop(key, None)
+                st.session_state.editor_ver += 1
+                st.session_state.last_view_index = None
+                st.rerun()
+
         st.divider()
+        st.caption(f"儲存方式：**{backend_name}**")
+        st.caption(backend_detail)
         if st.session_state.save_error:
             st.error(f"存檔失敗：{st.session_state.save_error}")
         elif st.session_state.last_saved:
             st.caption(f"✅ 已自動存檔 {st.session_state.last_saved}")
-            st.caption(f"存放位置：{DATA_FILE}")
-        else:
-            st.caption(f"存放位置：{DATA_FILE}")
 
     # ----- Header + metrics -----
     df = st.session_state.df
