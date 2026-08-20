@@ -47,6 +47,27 @@ Streamlit Community Cloud **沒有永久磁碟**，容器每次重建都會從 G
 
 ## 步驟 4：填 Streamlit Cloud 的 Secrets
 
+### 做法 A（推薦）：用轉檔工具，不會弄錯換行
+
+在 `project_tracker_app` 資料夾底下執行：
+
+```bash
+python make_secrets.py "C:\Users\你的名字\Downloads\金鑰檔.json" "試算表網址"
+```
+
+它會直接印出可以整段複製的內容。Windows 想直接進剪貼簿的話：
+
+```bash
+python make_secrets.py "金鑰檔.json" "試算表網址" | clip
+```
+
+貼到 [share.streamlit.io](https://share.streamlit.io) → 你的 App → 右下 **⋮** → **Settings** → **Secrets** → **Save**。
+
+> 本機也想連同一張試算表的話，加 `--write` 參數會順便寫一份到
+> `project_tracker_app/.streamlit/secrets.toml`（此路徑已在 `.gitignore`，不會被推上 GitHub）。
+
+### 做法 B：手動貼
+
 1. 到 [share.streamlit.io](https://share.streamlit.io) → 你的 App → 右下 **⋮** → **Settings** → **Secrets**
 2. 貼上下面的內容，把 `<>` 的部分換成你自己的（值都從那個 JSON 檔複製）：
 
